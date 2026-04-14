@@ -11,6 +11,7 @@ const UPLOAD_DIR = path.join(__dirname, 'uploads');
 // ── Middleware ────────────────────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Multer storage config ─────────────────────────────────────────────────────
 const storage = multer.diskStorage({
@@ -62,8 +63,8 @@ app.delete('/files/:name', (req, res) => {
   res.json({ message: `Deleted: ${req.params.name}` });
 });
 
-// GET /  – health check
-app.get('/', (req, res) => res.json({ status: 'running', port: PORT }));
+// GET /  – serve web UI
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {

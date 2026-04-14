@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FileStore — Local File Server</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+/* ── Design Tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --bg:           #09090b;
+  --surface:      #111115;
+  --surface-2:    #18181d;
+  --surface-3:    #202026;
+  --border:       #2a2a35;
+  --border-light: #33333f;
+  --accent:       #6366f1;
+  --accent-dim:   rgba(99,102,241,.15);
+  --accent-glow:  rgba(99,102,241,.35);
+  --accent-hover: #818cf8;
+  --green:        #22c55e;
+  --red:          #ef4444;
+  --amber:        #f59e0b;
+  --blue:         #3b82f6;
+  --purple:       #a855f7;
+  --pink:         #ec4899;
+  --text-1:       #fafafa;
+  --text-2:       #a1a1aa;
+  --text-3:       #52525b;
+  --radius:       10px;
+  --radius-sm:    6px;
+  --radius-lg:    14px;
+  --shadow:       0 4px 24px rgba(0,0,0,.5);
+  --shadow-sm:    0 2px 8px rgba(0,0,0,.35);
+  --transition:   150ms cubic-bezier(.4,0,.2,1);
+}
+
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; -webkit-font-smoothing: antialiased; }
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text-1);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+button { font-family: inherit; cursor: pointer; border: none; outline: none; }
+input  { font-family: inherit; outline: none; border: none; }
+
+/* ── Layout ────────────────────────────────────────────────────────────────── */
+.app { display: flex; flex-direction: column; min-height: 100vh; }
+
+/* ── Topbar ────────────────────────────────────────────────────────────────── */
+.topbar {
+  position: sticky; top: 0; z-index: 50;
+  background: rgba(9,9,11,.85);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  height: 56px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.topbar-logo {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 600; font-size: 1rem; color: var(--text-1);
+  letter-spacing: -.01em;
+}
+.logo-icon {
+  width: 30px; height: 30px;
+  background: var(--accent);
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+}
+.topbar-status {
+  display: flex; align-items: center; gap: 6px;
+  font-size: .75rem; color: var(--text-2);
+}
+.status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,100% { opacity: 1; }
+  50%      { opacity: .5; }
+}
+
+/* ── Stats Bar ─────────────────────────────────────────────────────────────── */
+.stats-bar {
+  display: flex; gap: 1px;
+  background: var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.stat-card {
+  flex: 1; padding: 14px 24px;
+  background: var(--surface);
+  display: flex; align-items: center; gap: 12px;
+}
+.stat-card:first-child { border-radius: 0; }
+.stat-icon {
+  width: 36px; height: 36px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.stat-info { display: flex; flex-direction: column; gap: 2px; }
+.stat-value { font-size: 1.25rem; font-weight: 700; letter-spacing: -.02em; color: var(--text-1); }
+.stat-label { font-size: .7rem; color: var(--text-3); font-weight: 500; text-transform: uppercase; letter-spacing: .06em; }
+
+/* ── Main ──────────────────────────────────────────────────────────────────── */
+.main { flex: 1; padding: 24px; max-width: 1400px; width: 100%; margin: 0 auto; }
+
+/* ── Upload Zone ───────────────────────────────────────────────────────────── */
+.upload-zone {
+  border: 2px dashed var(--border-light);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 36px 24px;
+  text-align: center;
+  transition: all var(--transition);
+  cursor: pointer;
+  margin-bottom: 24px;
+  position: relative;
+  overflow: hidden;
+}
+.upload-zone::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 0%, var(--accent-dim) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 300ms;
+}
+.upload-zone:hover::before,
+.upload-zone.drag-over::before { opacity: 1; }
+.upload-zone:hover,
+.upload-zone.drag-over {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+.upload-zone.drag-over { transform: scale(1.005); }
+.upload-icon-wrap {
+  width: 56px; height: 56px;
+  border-radius: 14px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-glow);
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 16px;
+  transition: all var(--transition);
+}
+.upload-zone:hover .upload-icon-wrap { background: var(--accent); box-shadow: 0 0 20px var(--accent-glow); }
+.upload-zone:hover .upload-icon-wrap svg path { stroke: #fff; }
+.upload-title { font-size: 1rem; font-weight: 600; color: var(--text-1); margin-bottom: 6px; }
+.upload-sub   { font-size: .8rem; color: var(--text-2); }
+.upload-sub b { color: var(--accent); font-weight: 500; }
+#fileInput { display: none; }
+
+/* ── Upload Progress ───────────────────────────────────────────────────────── */
+.upload-progress-list { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.upload-item {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface-2); border-radius: var(--radius-sm);
+  padding: 10px 14px; font-size: .8rem;
+}
+.upload-item-name { flex: 1; color: var(--text-1); font-family: 'JetBrains Mono', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.upload-item-status { flex-shrink: 0; color: var(--text-2); }
+.progress-bar-wrap { height: 3px; background: var(--border); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.progress-bar { height: 100%; background: var(--accent); border-radius: 2px; width: 0; transition: width 200ms; }
+
+/* ── Toolbar ───────────────────────────────────────────────────────────────── */
+.toolbar {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 16px; flex-wrap: wrap;
+}
+.search-wrap {
+  flex: 1; min-width: 200px;
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 14px; height: 38px;
+  transition: border-color var(--transition);
+}
+.search-wrap:focus-within { border-color: var(--accent); }
+.search-wrap svg { flex-shrink: 0; opacity: .4; }
+.search-wrap input {
+  background: none; color: var(--text-1); font-size: .85rem;
+  width: 100%; height: 100%;
+}
+.search-wrap input::placeholder { color: var(--text-3); }
+.filter-tabs {
+  display: flex; align-items: center; gap: 4px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 4px;
+}
+.filter-tab {
+  padding: 4px 12px; border-radius: 4px;
+  font-size: .75rem; font-weight: 500;
+  color: var(--text-2); background: none;
+  transition: all var(--transition);
+}
+.filter-tab.active { background: var(--surface-3); color: var(--text-1); }
+.filter-tab:hover:not(.active) { color: var(--text-1); }
+.view-toggle {
+  display: flex; gap: 2px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px;
+}
+.view-btn {
+  width: 30px; height: 30px; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-3); background: none;
+  transition: all var(--transition);
+}
+.view-btn.active { background: var(--surface-3); color: var(--text-1); }
+.view-btn:hover:not(.active) { color: var(--text-2); }
+.btn-refresh {
+  height: 38px; padding: 0 16px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-2);
+  font-size: .8rem; font-weight: 500;
+  display: flex; align-items: center; gap: 8px;
+  transition: all var(--transition);
+}
+.btn-refresh:hover { border-color: var(--accent); color: var(--text-1); }
+.btn-refresh svg { transition: transform 400ms; }
+.btn-refresh:hover svg { transform: rotate(180deg); }
+
+/* ── File Grid ─────────────────────────────────────────────────────────────── */
+.files-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.files-list { display: flex; flex-direction: column; gap: 4px; }
+
+/* ── File Card (Grid) ─────────────────────────────────────────────────────── */
+.file-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+  display: flex; flex-direction: column;
+  transition: all var(--transition);
+  position: relative;
+  animation: fadeUp .2s ease both;
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.file-card:hover {
+  border-color: var(--border-light);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+.file-card-thumb {
+  height: 110px; background: var(--surface-2);
+  display: flex; align-items: center; justify-content: center;
+  border-bottom: 1px solid var(--border);
+  position: relative; overflow: hidden;
+}
+.file-card-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.file-card-thumb .file-type-icon {
+  width: 44px; height: 44px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.1rem; font-weight: 700; letter-spacing: -.02em;
+  font-family: 'JetBrains Mono', monospace;
+}
+.file-card-body { padding: 10px 12px; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.file-card-name {
+  font-size: .78rem; font-weight: 500; color: var(--text-1);
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.file-card-meta { font-size: .68rem; color: var(--text-3); }
+.file-card-actions {
+  padding: 8px 12px; border-top: 1px solid var(--border);
+  display: flex; gap: 6px;
+}
+
+/* ── File Row (List) ──────────────────────────────────────────────────────── */
+.file-row {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); overflow: hidden;
+  display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+  transition: all var(--transition);
+  animation: fadeUp .2s ease both;
+}
+.file-row:hover { border-color: var(--border-light); background: var(--surface-2); }
+.file-row .file-type-icon {
+  width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .7rem; font-weight: 700; font-family: 'JetBrains Mono', monospace;
+}
+.file-row-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.file-row-name {
+  font-size: .82rem; font-weight: 500; color: var(--text-1);
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.file-row-meta { font-size: .7rem; color: var(--text-3); }
+.file-row-size  { font-size: .75rem; color: var(--text-2); font-family: 'JetBrains Mono', monospace; flex-shrink: 0; min-width: 70px; text-align: right; }
+.file-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+/* ── Action Buttons ────────────────────────────────────────────────────────── */
+.action-btn {
+  width: 30px; height: 30px;
+  border-radius: var(--radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  background: none; color: var(--text-3);
+  transition: all var(--transition);
+}
+.action-btn:hover { background: var(--surface-3); color: var(--text-1); }
+.action-btn.download:hover { color: var(--blue); }
+.action-btn.copy:hover    { color: var(--green); }
+.action-btn.delete:hover  { color: var(--red); background: rgba(239,68,68,.1); }
+.action-btn-sm {
+  flex: 1; height: 28px; border-radius: 5px;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  font-size: .72rem; font-weight: 500; background: var(--surface-3);
+  color: var(--text-2); transition: all var(--transition);
+}
+.action-btn-sm:hover { background: var(--border-light); color: var(--text-1); }
+.action-btn-sm.delete-sm:hover { background: rgba(239,68,68,.15); color: var(--red); }
+
+/* ── Empty State ───────────────────────────────────────────────────────────── */
+.empty-state {
+  text-align: center; padding: 60px 24px;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.empty-icon {
+  width: 64px; height: 64px; border-radius: 16px;
+  background: var(--surface-2); border: 1px dashed var(--border-light);
+  display: flex; align-items: center; justify-content: center; margin-bottom: 4px;
+}
+.empty-title  { font-size: 1rem; font-weight: 600; color: var(--text-1); }
+.empty-sub    { font-size: .82rem; color: var(--text-2); }
+
+/* ── Toast ─────────────────────────────────────────────────────────────────── */
+.toast-container {
+  position: fixed; bottom: 24px; right: 24px;
+  display: flex; flex-direction: column; gap: 8px; z-index: 9999;
+}
+.toast {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-radius: var(--radius);
+  background: var(--surface-3); border: 1px solid var(--border-light);
+  box-shadow: var(--shadow);
+  font-size: .82rem; color: var(--text-1);
+  animation: slideIn .2s ease both;
+  min-width: 260px; max-width: 360px;
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.toast.success { border-color: rgba(34,197,94,.3); }
+.toast.error   { border-color: rgba(239,68,68,.3); }
+.toast.info    { border-color: rgba(99,102,241,.3); }
+.toast-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.toast.success .toast-dot { background: var(--green); }
+.toast.error   .toast-dot { background: var(--red); }
+.toast.info    .toast-dot { background: var(--accent); }
+
+/* ── Delete Confirm Modal ──────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0,0,0,.6); backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  animation: fadeIn .15s ease;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.modal {
+  background: var(--surface-2); border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg); padding: 28px;
+  min-width: 340px; max-width: 420px;
+  box-shadow: var(--shadow);
+  animation: scaleIn .15s ease;
+}
+@keyframes scaleIn { from { transform: scale(.96); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.modal-icon {
+  width: 44px; height: 44px; border-radius: 10px;
+  background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.25);
+  display: flex; align-items: center; justify-content: center; margin-bottom: 14px;
+}
+.modal-title { font-size: 1rem; font-weight: 600; margin-bottom: 6px; }
+.modal-sub   { font-size: .82rem; color: var(--text-2); margin-bottom: 22px; line-height: 1.5; }
+.modal-sub code {
+  font-family: 'JetBrains Mono', monospace; font-size: .78rem;
+  background: var(--surface-3); padding: 1px 5px; border-radius: 3px; color: var(--text-1);
+}
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.btn-cancel {
+  padding: 8px 18px; border-radius: var(--radius-sm);
+  background: var(--surface-3); color: var(--text-2);
+  font-size: .82rem; font-weight: 500;
+  border: 1px solid var(--border); transition: all var(--transition);
+}
+.btn-cancel:hover { color: var(--text-1); border-color: var(--border-light); }
+.btn-delete-confirm {
+  padding: 8px 18px; border-radius: var(--radius-sm);
+  background: var(--red); color: #fff;
+  font-size: .82rem; font-weight: 500; transition: all var(--transition);
+}
+.btn-delete-confirm:hover { background: #dc2626; box-shadow: 0 0 12px rgba(239,68,68,.35); }
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+
+/* ── Responsive ────────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .stats-bar { flex-wrap: wrap; }
+  .stat-card { min-width: 50%; }
+  .main { padding: 16px; }
+  .topbar { padding: 0 16px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ── Topbar ──────────────────────────────────────────────────────────────── -->
+<header class="topbar">
+  <div class="topbar-logo">
+    <div class="logo-icon">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M4 6h16M4 12h16M4 18h10" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </div>
+    FileStore
+  </div>
+  <div class="topbar-status">
+    <div class="status-dot"></div>
+    <span id="serverStatus">Connecting…</span>
+  </div>
+</header>
+
+<!-- ── Stats ───────────────────────────────────────────────────────────────── -->
+<div class="stats-bar">
+  <div class="stat-card">
+    <div class="stat-icon" style="background:rgba(99,102,241,.12);border:1px solid rgba(99,102,241,.2)">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" stroke="#6366f1" stroke-width="1.8"/><path d="M3 10h18" stroke="#6366f1" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </div>
+    <div class="stat-info">
+      <span class="stat-value" id="totalFiles">—</span>
+      <span class="stat-label">Total Files</span>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon" style="background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.2)">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#22c55e" stroke-width="1.8"/><path d="M12 7v5l3 3" stroke="#22c55e" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </div>
+    <div class="stat-info">
+      <span class="stat-value" id="totalSize">—</span>
+      <span class="stat-label">Total Size</span>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon" style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.2)">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 3l9 18H3L12 3z" stroke="#f59e0b" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 10v4M12 17v.5" stroke="#f59e0b" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </div>
+    <div class="stat-info">
+      <span class="stat-value" id="totalTypes">—</span>
+      <span class="stat-label">File Types</span>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon" style="background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.2)">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#3b82f6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="stat-info">
+      <span class="stat-value" id="largestFile">—</span>
+      <span class="stat-label">Largest File</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── Main Content ────────────────────────────────────────────────────────── -->
+<main class="main">
+
+  <!-- Upload Zone -->
+  <div class="upload-zone" id="uploadZone">
+    <div class="upload-icon-wrap">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="17 8 12 3 7 8" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="12" y1="3" x2="12" y2="15" stroke="#6366f1" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div class="upload-title">Drop files here or <b style="color:var(--accent)">click to browse</b></div>
+    <div class="upload-sub">Upload any file — images, documents, archives, code &amp; more</div>
+    <input type="file" id="fileInput" multiple />
+    <div class="upload-progress-list" id="progressList"></div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="search-wrap">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="#a1a1aa" stroke-width="2"/><path d="m21 21-4.35-4.35" stroke="#a1a1aa" stroke-width="2" stroke-linecap="round"/></svg>
+      <input type="text" id="searchInput" placeholder="Search files…" />
+    </div>
+    <div class="filter-tabs" id="filterTabs">
+      <button class="filter-tab active" data-type="all">All</button>
+      <button class="filter-tab" data-type="image">Images</button>
+      <button class="filter-tab" data-type="doc">Docs</button>
+      <button class="filter-tab" data-type="video">Video</button>
+      <button class="filter-tab" data-type="archive">Archives</button>
+      <button class="filter-tab" data-type="code">Code</button>
+    </div>
+    <div class="view-toggle">
+      <button class="view-btn active" id="gridBtn" title="Grid view">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2"/><rect x="14" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2"/><rect x="3" y="14" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2"/><rect x="14" y="14" width="7" height="7" rx="1" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
+      <button class="view-btn" id="listBtn" title="List view">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <button class="btn-refresh" id="refreshBtn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M23 4v6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M1 20v-6h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Refresh
+    </button>
+  </div>
+
+  <!-- Files Container -->
+  <div id="filesContainer" class="files-grid"></div>
+</main>
+</div>
+
+<!-- ── Toast Container ─────────────────────────────────────────────────────── -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- ── Delete Modal ────────────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="deleteModal" style="display:none">
+  <div class="modal">
+    <div class="modal-icon">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v5M14 11v5M9 6V4h6v2" stroke="#ef4444" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="modal-title">Delete file?</div>
+    <div class="modal-sub">This will permanently delete <code id="deleteFileName"></code>. This action cannot be undone.</div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="cancelDelete">Cancel</button>
+      <button class="btn-delete-confirm" id="confirmDelete">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = 'http://localhost:1919';
+let allFiles = [];
+let currentView = 'grid';
+let currentFilter = 'all';
+let currentSearch = '';
+let pendingDelete = null;
+
+/* ── File Type System ───────────────────────────────────────────────────── */
+const TYPE_MAP = {
+  image:   { exts: ['jpg','jpeg','png','gif','webp','svg','bmp','ico','avif','tiff'], color:'#a855f7', bg:'rgba(168,85,247,.12)', label:'IMG' },
+  video:   { exts: ['mp4','mov','avi','mkv','webm','m4v','flv','wmv'],              color:'#ec4899', bg:'rgba(236,72,153,.12)',  label:'VID' },
+  audio:   { exts: ['mp3','wav','ogg','flac','aac','m4a','opus'],                   color:'#f59e0b', bg:'rgba(245,158,11,.12)',  label:'AUD' },
+  doc:     { exts: ['pdf','doc','docx','txt','md','rtf','odt','xls','xlsx','csv','ppt','pptx'], color:'#3b82f6', bg:'rgba(59,130,246,.12)', label:'DOC' },
+  code:    { exts: ['js','ts','jsx','tsx','html','css','py','java','cpp','c','go','rs','php','rb','json','yaml','yml','xml','sh','bash','sql'], color:'#22c55e', bg:'rgba(34,197,94,.12)', label:'</>' },
+  archive: { exts: ['zip','tar','gz','7z','rar','bz2','xz'],                        color:'#f59e0b', bg:'rgba(245,158,11,.12)',  label:'ZIP' },
+  font:    { exts: ['ttf','otf','woff','woff2'],                                    color:'#6366f1', bg:'rgba(99,102,241,.12)',  label:'FNT' },
+};
+
+function getFileType(name) {
+  const ext = name.split('.').pop()?.toLowerCase() || '';
+  for (const [type, cfg] of Object.entries(TYPE_MAP)) {
+    if (cfg.exts.includes(ext)) return { type, ext, ...cfg };
+  }
+  return { type:'other', ext, color:'#71717a', bg:'rgba(113,113,122,.12)', label: ext.toUpperCase().slice(0,3) || '?' };
+}
+
+function isImage(name) {
+  return TYPE_MAP.image.exts.includes(name.split('.').pop()?.toLowerCase());
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024)       return bytes + ' B';
+  if (bytes < 1048576)    return (bytes/1024).toFixed(1) + ' KB';
+  if (bytes < 1073741824) return (bytes/1048576).toFixed(1) + ' MB';
+  return (bytes/1073741824).toFixed(2) + ' GB';
+}
+
+function formatDate(d) {
+  return new Date(d).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' });
+}
+
+/* ── Toast ──────────────────────────────────────────────────────────────── */
+function toast(msg, type = 'info') {
+  const wrap = document.getElementById('toastContainer');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `<div class="toast-dot"></div><span>${msg}</span>`;
+  wrap.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; setTimeout(() => el.remove(), 300); }, 2800);
+}
+
+/* ── Stats ──────────────────────────────────────────────────────────────── */
+function updateStats(files) {
+  document.getElementById('totalFiles').textContent = files.length;
+  const total = files.reduce((s, f) => s + f.size, 0);
+  document.getElementById('totalSize').textContent = formatSize(total);
+  const types = new Set(files.map(f => getFileType(f.name).type));
+  document.getElementById('totalTypes').textContent = types.size;
+  const largest = files.reduce((m, f) => f.size > m ? f.size : m, 0);
+  document.getElementById('largestFile').textContent = largest ? formatSize(largest) : '—';
+}
+
+/* ── Fetch Files ────────────────────────────────────────────────────────── */
+async function loadFiles() {
+  try {
+    const res = await fetch(`${API}/files`);
+    const data = await res.json();
+    allFiles = data.files || [];
+    document.getElementById('serverStatus').textContent = `localhost:1919 — ${allFiles.length} file${allFiles.length!==1?'s':''}`;
+    updateStats(allFiles);
+    renderFiles();
+  } catch(e) {
+    document.getElementById('serverStatus').textContent = 'Server unreachable';
+    document.querySelector('.status-dot').style.background = 'var(--red)';
+    toast('Cannot connect to server at localhost:1919', 'error');
+  }
+}
+
+/* ── Filter & Render ────────────────────────────────────────────────────── */
+function getFiltered() {
+  return allFiles.filter(f => {
+    const typeInfo = getFileType(f.name);
+    const matchFilter = currentFilter === 'all' || typeInfo.type === currentFilter;
+    const matchSearch = !currentSearch || f.name.toLowerCase().includes(currentSearch.toLowerCase());
+    return matchFilter && matchSearch;
+  });
+}
+
+function renderFiles() {
+  const container = document.getElementById('filesContainer');
+  const files = getFiltered();
+  container.className = currentView === 'grid' ? 'files-grid' : 'files-list';
+
+  if (!files.length) {
+    container.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
+      <div class="empty-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z" stroke="#52525b" stroke-width="1.8"/><polyline points="13 2 13 9 20 9" stroke="#52525b" stroke-width="1.8"/></svg>
+      </div>
+      <div class="empty-title">${currentSearch ? 'No matches found' : 'No files yet'}</div>
+      <div class="empty-sub">${currentSearch ? `Try a different search term` : 'Upload your first file using the zone above'}</div>
+    </div>`;
+    return;
+  }
+
+  container.innerHTML = files.map((f, i) => {
+    const ti = getFileType(f.name);
+    const iconHtml = `<div class="file-type-icon" style="background:${ti.bg};color:${ti.color}">${ti.label}</div>`;
+    const thumbHtml = isImage(f.name)
+      ? `<img src="${API}/files/${encodeURIComponent(f.name)}" alt="${f.name}" loading="lazy" onerror="this.parentNode.innerHTML='${iconHtml.replace(/'/g,"&#39;")}'"/>`
+      : iconHtml;
+
+    if (currentView === 'grid') {
+      return `<div class="file-card" style="animation-delay:${i*20}ms">
+        <div class="file-card-thumb">${thumbHtml}</div>
+        <div class="file-card-body">
+          <div class="file-card-name" title="${f.name}">${f.name}</div>
+          <div class="file-card-meta">${formatSize(f.size)} · ${formatDate(f.modified)}</div>
+        </div>
+        <div class="file-card-actions">
+          <button class="action-btn-sm download" onclick="downloadFile('${f.name}')">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><polyline points="7 10 12 15 17 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            Download
+          </button>
+          <button class="action-btn-sm" onclick="copyUrl('${f.name}')">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            Copy URL
+          </button>
+          <button class="action-btn-sm delete-sm" onclick="requestDelete('${f.name}')">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v5M14 11v5M9 6V4h6v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </div>`;
+    } else {
+      return `<div class="file-row" style="animation-delay:${i*15}ms">
+        <div class="file-type-icon" style="background:${ti.bg};color:${ti.color};width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:.68rem;font-weight:700;font-family:'JetBrains Mono',monospace;flex-shrink:0">${ti.label}</div>
+        <div class="file-row-info">
+          <div class="file-row-name" title="${f.name}">${f.name}</div>
+          <div class="file-row-meta">${formatDate(f.modified)}</div>
+        </div>
+        <div class="file-row-size">${formatSize(f.size)}</div>
+        <div class="file-row-actions">
+          <button class="action-btn download" title="Download" onclick="downloadFile('${f.name}')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><polyline points="7 10 12 15 17 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+          <button class="action-btn copy" title="Copy URL" onclick="copyUrl('${f.name}')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+          <button class="action-btn delete" title="Delete" onclick="requestDelete('${f.name}')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v5M14 11v5M9 6V4h6v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </div>`;
+    }
+  }).join('');
+}
+
+/* ── Actions ──────────────────────────────────────────────────────────── */
+function downloadFile(name) {
+  const a = document.createElement('a');
+  a.href = `${API}/files/${encodeURIComponent(name)}`;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast(`Downloading ${name}`, 'success');
+}
+
+function copyUrl(name) {
+  const url = `${API}/files/${encodeURIComponent(name)}`;
+  navigator.clipboard.writeText(url).then(() => toast('URL copied to clipboard!', 'success')).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = url; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove();
+    toast('URL copied!', 'success');
+  });
+}
+
+function requestDelete(name) {
+  pendingDelete = name;
+  document.getElementById('deleteFileName').textContent = name;
+  document.getElementById('deleteModal').style.display = 'flex';
+}
+
+async function confirmDeleteFn() {
+  if (!pendingDelete) return;
+  const name = pendingDelete;
+  document.getElementById('deleteModal').style.display = 'none';
+  try {
+    const res = await fetch(`${API}/files/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (res.ok) { toast(`Deleted "${name}"`, 'success'); await loadFiles(); }
+    else { const e = await res.json(); toast(e.error || 'Delete failed', 'error'); }
+  } catch { toast('Network error', 'error'); }
+  pendingDelete = null;
+}
+
+/* ── Upload ───────────────────────────────────────────────────────────── */
+async function uploadFiles(files) {
+  if (!files.length) return;
+  const progressList = document.getElementById('progressList');
+
+  for (const file of files) {
+    const id = `prog_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const item = document.createElement('div');
+    item.className = 'upload-item';
+    item.innerHTML = `
+      <span class="upload-item-name">${file.name}</span>
+      <span class="upload-item-status" id="status_${id}">Uploading…</span>
+      <div class="progress-bar-wrap" style="position:absolute;bottom:0;left:0;right:0;border-radius:0">
+        <div class="progress-bar" id="bar_${id}"></div>
+      </div>`;
+    item.style.position = 'relative';
+    progressList.appendChild(item);
+
+    const fd = new FormData();
+    fd.append('files', file);
+
+    await new Promise(resolve => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API}/upload`);
+      xhr.upload.onprogress = e => {
+        if (e.lengthComputable) {
+          const pct = Math.round(e.loaded / e.total * 100);
+          const bar = document.getElementById(`bar_${id}`);
+          if (bar) bar.style.width = pct + '%';
+        }
+      };
+      xhr.onload = () => {
+        const st = document.getElementById(`status_${id}`);
+        if (xhr.status === 200) {
+          if (st) st.textContent = '✓ Done';
+          if (st) st.style.color = 'var(--green)';
+          toast(`Uploaded "${file.name}"`, 'success');
+        } else {
+          if (st) st.textContent = '✗ Failed';
+          if (st) st.style.color = 'var(--red)';
+          toast(`Failed to upload "${file.name}"`, 'error');
+        }
+        setTimeout(() => { item.style.opacity = '0'; item.style.transition = 'opacity .3s'; setTimeout(() => item.remove(), 300); }, 1500);
+        resolve();
+      };
+      xhr.onerror = () => { toast('Upload error', 'error'); resolve(); };
+      xhr.send(fd);
+    });
+  }
+  await loadFiles();
+}
+
+/* ── Events ───────────────────────────────────────────────────────────── */
+const zone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+
+zone.addEventListener('click', e => { if (e.target === zone || e.target.closest('.upload-icon-wrap') || e.target.matches('.upload-title, .upload-sub, b')) fileInput.click(); });
+fileInput.addEventListener('change', e => uploadFiles([...e.target.files]));
+
+zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag-over'); });
+zone.addEventListener('dragleave', e => { if (!zone.contains(e.relatedTarget)) zone.classList.remove('drag-over'); });
+zone.addEventListener('drop', e => {
+  e.preventDefault(); zone.classList.remove('drag-over');
+  uploadFiles([...e.dataTransfer.files]);
+});
+
+document.getElementById('searchInput').addEventListener('input', e => {
+  currentSearch = e.target.value; renderFiles();
+});
+
+document.getElementById('filterTabs').addEventListener('click', e => {
+  const btn = e.target.closest('.filter-tab');
+  if (!btn) return;
+  document.querySelectorAll('.filter-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentFilter = btn.dataset.type;
+  renderFiles();
+});
+
+document.getElementById('gridBtn').addEventListener('click', () => {
+  currentView = 'grid';
+  document.getElementById('gridBtn').classList.add('active');
+  document.getElementById('listBtn').classList.remove('active');
+  renderFiles();
+});
+document.getElementById('listBtn').addEventListener('click', () => {
+  currentView = 'list';
+  document.getElementById('listBtn').classList.add('active');
+  document.getElementById('gridBtn').classList.remove('active');
+  renderFiles();
+});
+
+document.getElementById('refreshBtn').addEventListener('click', loadFiles);
+document.getElementById('cancelDelete').addEventListener('click', () => {
+  document.getElementById('deleteModal').style.display = 'none'; pendingDelete = null;
+});
+document.getElementById('confirmDelete').addEventListener('click', confirmDeleteFn);
+document.getElementById('deleteModal').addEventListener('click', e => {
+  if (e.target === document.getElementById('deleteModal')) { document.getElementById('deleteModal').style.display='none'; pendingDelete=null; }
+});
+
+/* ── Keyboard Shortcuts ─────────────────────────────────────────────── */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { document.getElementById('deleteModal').style.display='none'; pendingDelete=null; }
+  if ((e.metaKey||e.ctrlKey) && e.key==='f') { e.preventDefault(); document.getElementById('searchInput').focus(); }
+  if ((e.metaKey||e.ctrlKey) && e.key==='u') { e.preventDefault(); fileInput.click(); }
+});
+
+/* ── Init ─────────────────────────────────────────────────────────────── */
+loadFiles();
+setInterval(loadFiles, 15000);
+</script>
+</body>
+</html>
