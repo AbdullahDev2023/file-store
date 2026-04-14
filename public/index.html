@@ -550,7 +550,7 @@ input  { font-family: inherit; outline: none; border: none; }
 </div>
 
 <script>
-const API = 'http://localhost:1919';
+const API = '';
 let allFiles = [];
 let currentView = 'grid';
 let currentFilter = 'all';
@@ -658,7 +658,7 @@ function renderFiles() {
     const ti = getFileType(f.name);
     const iconHtml = `<div class="file-type-icon" style="background:${ti.bg};color:${ti.color}">${ti.label}</div>`;
     const thumbHtml = isImage(f.name)
-      ? `<img src="${API}/files/${encodeURIComponent(f.name)}" alt="${f.name}" loading="lazy" onerror="this.parentNode.innerHTML='${iconHtml.replace(/'/g,"&#39;")}'"/>`
+      ? `<img src="/files/${encodeURIComponent(f.name)}" alt="${f.name}" loading="lazy" onerror="this.parentNode.innerHTML='${iconHtml.replace(/'/g,"&#39;")}'"/>`
       : iconHtml;
 
     if (currentView === 'grid') {
@@ -718,7 +718,7 @@ function downloadFile(name) {
 }
 
 function copyUrl(name) {
-  const url = `${API}/files/${encodeURIComponent(name)}`;
+  const url = `${window.location.origin}/files/${encodeURIComponent(name)}`;
   navigator.clipboard.writeText(url).then(() => toast('URL copied to clipboard!', 'success')).catch(() => {
     const ta = document.createElement('textarea');
     ta.value = url; document.body.appendChild(ta); ta.select();
