@@ -22,7 +22,10 @@ const storage = multer.diskStorage({
     cb(null, `${Date.now()}_${safe}`);
   }
 });
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: { fileSize: 40 * 1024 * 1024 * 1024 } // 40 GB
+});
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -67,7 +70,11 @@ app.delete('/files/:name', (req, res) => {
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\n  File Store running at http://localhost:${PORT}`);
   console.log(`  Upload folder : ${UPLOAD_DIR}\n`);
 });
+
+// Allow large file uploads to take up to 12 hours
+server.timeout        = 12 * 60 * 60 * 1000; // 12 h (ms)
+server.keepAliveTimeout = 12 * 60 * 60 * 1000;
