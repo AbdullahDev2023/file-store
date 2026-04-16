@@ -580,6 +580,10 @@ function isImage(name) {
   return TYPE_MAP.image.exts.includes(name.split('.').pop()?.toLowerCase());
 }
 
+function isVideo(name) {
+  return TYPE_MAP.video.exts.includes(name.split('.').pop()?.toLowerCase());
+}
+
 function formatSize(bytes) {
   if (bytes < 1024)       return bytes + ' B';
   if (bytes < 1048576)    return (bytes/1024).toFixed(1) + ' KB';
@@ -691,6 +695,9 @@ function renderFiles() {
         </div>
         <div class="file-row-size">${formatSize(f.size)}</div>
         <div class="file-row-actions">
+          ${isVideo(f.name) ? `<button class="action-btn copy" title="Watch" onclick="openVideo('${f.name}')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><polygon points="8,5 19,12 8,19" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          </button>` : ''}
           <button class="action-btn download" title="Download" onclick="downloadFile('${f.name}')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><polyline points="7 10 12 15 17 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           </button>
@@ -715,6 +722,10 @@ function downloadFile(name) {
   a.click();
   a.remove();
   toast(`Downloading ${name}`, 'success');
+}
+
+function openVideo(name) {
+  window.open(`/watch/${encodeURIComponent(name)}`, '_blank', 'noopener,noreferrer');
 }
 
 function copyUrl(name) {
