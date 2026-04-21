@@ -4,6 +4,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { pipeline } = require('stream/promises');
 
 const app = express();
 const PORT = process.env.PORT || 1919;
@@ -33,6 +34,8 @@ const upload = multer({
   storage,
   limits: { fileSize: 40 * 1024 * 1024 * 1024 } // 40 GB
 });
+
+const activeFileTransfers = new Map();
 
 function sanitizeFilename(name) {
   return path.basename(String(name || 'file')).replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -91,6 +94,70 @@ function listStoredFiles() {
     .filter(Boolean);
 }
 
+function registerFileTransfer(filePath, stream, res) {
+  const transfer = { stream, res, cleaned: false };
+
+  if (!activeFileTransfers.has(filePath)) {
+    activeFileTransfers.set(filePath, new Set());
+  }
+
+  const transfers = activeFileTransfers.get(filePath);
+  transfers.add(transfer);
+
+  const cleanup = () => {
+    if (transfer.cleaned) return;
+    transfer.cleaned = true;
+
+    const currentTransfers = activeFileTransfers.get(filePath);
+    if (!currentTransfers) return;
+
+    currentTransfers.delete(transfer);
+    if (currentTransfers.size === 0) {
+      activeFileTransfers.delete(filePath);
+    }
+  };
+
+  stream.once('close', cleanup);
+  stream.once('error', cleanup);
+}
+
+function abortActiveTransfers(filePath) {
+  const transfers = activeFileTransfers.get(filePath);
+  if (!transfers || transfers.size === 0) return;
+
+  const error = new Error('File deleted');
+  error.code = 'FILE_DELETED';
+
+  for (const transfer of transfers) {
+    if (!transfer.stream.destroyed) {
+      transfer.stream.destroy(error);
+    }
+
+    if (!transfer.res.destroyed) {
+      transfer.res.destroy(error);
+    }
+  }
+}
+
+function waitForTransferCleanup(filePath, timeoutMs = 1000) {
+  if (!activeFileTransfers.has(filePath)) return Promise.resolve();
+
+  return new Promise(resolve => {
+    const startedAt = Date.now();
+
+    const poll = () => {
+      if (!activeFileTransfers.has(filePath) || Date.now() - startedAt >= timeoutMs) {
+        resolve();
+        return;
+      }
+
+      setTimeout(poll, 25);
+    };
+
+    poll();
+  });
+}
+
 // ── Resumable upload helpers ─────────────────────────────────────────────────
 function createResumableSession(originalName, totalChunks, totalSize) {
   const uploadId = crypto.randomUUID();
@@ -142,37 +209,77 @@ function isVideoFile(name) {
     .includes(path.extname(name).toLowerCase());
 }
 
-function sendVideoWithRange(req, res, filePath) {
-  const stat = fs.statSync(filePath);
+async function streamStoredFile(req, res, filePath, { download = false } = {}) {
+  const stat = await fs.promises.stat(filePath);
   const range = req.headers.range;
 
-  res.setHeader('Accept-Ranges', 'bytes');
-  res.setHeader('Content-Type', `video/${path.extname(filePath).slice(1).toLowerCase() === 'm4v' ? 'mp4' : path.extname(filePath).slice(1).toLowerCase()}`);
-
-  if (!range) {
+  if (download) {
+    res.attachment(path.basename(filePath));
+    res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Length', stat.size);
-    fs.createReadStream(filePath).pipe(res);
-    return;
+  } else {
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader(
+      'Content-Type',
+      `video/${path.extname(filePath).slice(1).toLowerCase() === 'm4v'
+        ? 'mp4'
+        : path.extname(filePath).slice(1).toLowerCase()}`
+    );
   }
 
-  const match = range.match(/bytes=(\d+)-(\d*)/);
-  if (!match) {
-    res.status(416).end();
-    return;
+  let streamOptions = undefined;
+
+  if (!download && range) {
+    const match = range.match(/bytes=(\d+)-(\d*)/);
+    if (!match) {
+      res.status(416).end();
+      return;
+    }
+
+    const start = Number(match[1]);
+    const end = match[2] ? Number(match[2]) : stat.size - 1;
+    if (start >= stat.size || end >= stat.size) {
+      res.status(416).setHeader('Content-Range', `bytes */${stat.size}`).end();
+      return;
+    }
+
+    const chunkEnd = Math.min(end, stat.size - 1);
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${start}-${chunkEnd}/${stat.size}`);
+    res.setHeader('Content-Length', chunkEnd - start + 1);
+    streamOptions = { start, end: chunkEnd };
+  } else if (!download) {
+    res.setHeader('Content-Length', stat.size);
   }
 
-  const start = Number(match[1]);
-  const end = match[2] ? Number(match[2]) : stat.size - 1;
-  if (start >= stat.size || end >= stat.size) {
-    res.status(416).setHeader('Content-Range', `bytes */${stat.size}`).end();
-    return;
-  }
+  const stream = fs.createReadStream(filePath, streamOptions);
+  registerFileTransfer(filePath, stream, res);
 
-  const chunkEnd = Math.min(end, stat.size - 1);
-  res.status(206);
-  res.setHeader('Content-Range', `bytes ${start}-${chunkEnd}/${stat.size}`);
-  res.setHeader('Content-Length', chunkEnd - start + 1);
-  fs.createReadStream(filePath, { start, end: chunkEnd }).pipe(res);
+  req.once('aborted', () => {
+    if (!stream.destroyed) {
+      stream.destroy(new Error('Client aborted request'));
+    }
+  });
+
+  res.once('close', () => {
+    if (!res.writableEnded && !stream.destroyed) {
+      stream.destroy(new Error('Response closed before transfer finished'));
+    }
+  });
+
+  try {
+    await pipeline(stream, res);
+  } catch (error) {
+    if (error.code === 'ERR_STREAM_PREMATURE_CLOSE' || error.code === 'FILE_DELETED') {
+      return;
+    }
+
+    if (req.aborted || res.destroyed || stream.destroyed) {
+      return;
+    }
+
+    throw error;
+  }
 }
 
 function renderVideoPage(name, fileUrlPath) {
@@ -446,10 +553,11 @@ app.get('/files', (req, res) => {
 app.get('/files/:name', (req, res) => {
   const file = resolveUploadPath(req.params.name);
   if (!fs.existsSync(file)) return res.status(404).json({ error: 'Not found' });
-  if (isVideoFile(file)) {
-    return sendVideoWithRange(req, res, file);
-  }
-  res.download(file);
+  return streamStoredFile(req, res, file, { download: !isVideoFile(file) })
+    .catch(error => {
+      if (res.headersSent) return;
+      res.status(error.statusCode || 500).json({ error: error.message || 'Failed to stream file' });
+    });
 });
 
 // GET /watch/:name  – open a video player page
@@ -462,11 +570,19 @@ app.get('/watch/:name', (req, res) => {
 });
 
 // DELETE /files/:name  – delete a file
-app.delete('/files/:name', (req, res) => {
+app.delete('/files/:name', async (req, res, next) => {
   const file = resolveUploadPath(req.params.name);
-  if (!fs.existsSync(file)) return res.status(404).json({ error: 'Not found' });
-  fs.unlinkSync(file);
-  res.json({ message: `Deleted: ${req.params.name}` });
+  try {
+    if (!fs.existsSync(file)) return res.status(404).json({ error: 'Not found' });
+
+    abortActiveTransfers(file);
+    await waitForTransferCleanup(file);
+    await fs.promises.unlink(file);
+
+    return res.json({ message: `Deleted: ${req.params.name}` });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 // GET /  – serve web UI
